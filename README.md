@@ -23,59 +23,70 @@ A Linux desktop application that automatically removes silent parts from videos 
 
 ### Option A: Download Binary (Easiest)
 
-1. Download `video-silence-cutter` from [Releases](https://github.com/shatrix/video-silence-cutter/releases)
-2. Install dependencies:
+1. **Download** `video-silence-cutter` from [Releases](https://github.com/shatrix/video-silence-cutter/releases)
+
+2. **Install dependencies:**
    ```bash
-   sudo apt install ffmpeg auto-editor  # Ubuntu/Debian
+   # Ubuntu/Debian
+   sudo apt install ffmpeg auto-editor
+   
+   # Fedora
+   sudo dnf install ffmpeg auto-editor
+   
+   # Arch Linux
+   sudo pacman -S ffmpeg
+   pip install auto-editor
    ```
-3. Run:
+
+3. **Run the app:**
    ```bash
    chmod +x video-silence-cutter
    ./video-silence-cutter
    ```
 
-### Option B: Clone and Setup
+---
 
-### 1. Install auto-editor
+### Option B: Build from Source
 
-```bash
-# Ubuntu/Debian
-sudo apt install auto-editor
+1. **Install auto-editor:**
+   ```bash
+   # Ubuntu/Debian
+   sudo apt install ffmpeg auto-editor
+   
+   # Fedora
+   sudo dnf install ffmpeg auto-editor
+   
+   # Arch Linux (use pip for auto-editor)
+   sudo pacman -S ffmpeg
+   pip install auto-editor
+   ```
 
-# Fedora
-sudo dnf install auto-editor
-
-# Arch Linux
-yay -S auto-editor
-
-# Or via pip (any distro)
-pip install auto-editor
-```
-
-### 2. Clone and setup
-
-```bash
-git clone git@github.com:shatrix/video-silence-cutter.git
-cd video-silence-cutter
-chmod +x setup.sh
-./setup.sh
-```
+2. **Clone and run setup:**
+   ```bash
+   git clone https://github.com/shatrix/video-silence-cutter.git
+   cd video-silence-cutter
+   chmod +x setup.sh
+   ./setup.sh
+   ```
 
 The setup script will:
-1. ✅ Check for ffmpeg and auto-editor
-2. ✅ Create a Python virtual environment
-3. ✅ Install PyQt6 for the GUI
-4. ✅ Create a launcher script
-5. ✅ Add the app to your application menu
+- ✅ Check for ffmpeg and auto-editor
+- ✅ Create a Python virtual environment
+- ✅ Install PyQt6 for the GUI
+- ✅ Create a launcher script
+- ✅ Add the app to your application menu
 
 ## 🎯 Usage
 
-### From Application Menu
+### Running the App
 
-After running `setup.sh`, find **"Video Silence Cutter"** in your application menu.
+**If you downloaded the binary:**
+```bash
+./video-silence-cutter
+```
 
-### From Terminal
-
+**If you installed from source:**
+- Find **"Video Silence Cutter"** in your application menu, or run:
 ```bash
 ./launch.sh
 ```
