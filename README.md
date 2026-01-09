@@ -16,11 +16,25 @@ A Linux desktop application that automatically removes silent parts from videos 
 ## 📋 Requirements
 
 - Linux (Ubuntu, Debian, Fedora, Arch, or similar)
-- Python 3.9+
 - ffmpeg
-- auto-editor (system package)
+- auto-editor
 
 ## 🚀 Installation
+
+### Option A: Download Binary (Easiest)
+
+1. Download `video-silence-cutter` from [Releases](https://github.com/shatrix/video-silence-cutter/releases)
+2. Install dependencies:
+   ```bash
+   sudo apt install ffmpeg auto-editor  # Ubuntu/Debian
+   ```
+3. Run:
+   ```bash
+   chmod +x video-silence-cutter
+   ./video-silence-cutter
+   ```
+
+### Option B: Clone and Setup
 
 ### 1. Install auto-editor
 
