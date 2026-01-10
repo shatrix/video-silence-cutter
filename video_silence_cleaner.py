@@ -342,6 +342,13 @@ class ProcessingThread(QThread):
         if silent_speed != 99999:
             cmd.extend(['--silent-speed', str(silent_speed)])
         
+        # Preserve quality - pass source bitrate to auto-editor
+        preserve_quality = self.options.get('preserve_quality', False)
+        if preserve_quality and info and info.bitrate > 0:
+            # Pass source bitrate + 10% headroom to auto-editor
+            target_bitrate = int(info.bitrate * 1.1)
+            cmd.extend(['--video-bitrate', f'{target_bitrate}k'])
+        
         # Run auto-editor
         process = subprocess.Popen(
             cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
