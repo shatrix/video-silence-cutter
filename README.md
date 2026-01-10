@@ -108,6 +108,9 @@ The setup script will:
 | **Silence Threshold** | 4% | Lower = more sensitive to quiet sounds |
 | **Frame Margin** | 6 frames | Adds padding around loud sections for natural transitions |
 | **Pre-process** | On | Converts video with ffmpeg before processing (fixes compatibility issues) |
+| **Encoding Speed** | Balanced | Trade-off between encoding time and file size (Fastest → Best Quality) |
+| **GPU Hardware Encoding** | Auto | Uses NVIDIA NVENC, Intel QSV, or AMD VAAPI if available for faster processing |
+| **Preserve Source Quality** | Off | Match original video bitrate instead of compressing (larger output files) |
 
 ## 🔧 How It Works
 

@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QFileDialog, QProgressBar,
     QGroupBox, QSpinBox, QDoubleSpinBox, QCheckBox, QRadioButton,
-    QButtonGroup, QTextEdit, QMessageBox, QFrame, QStyle
+    QButtonGroup, QTextEdit, QMessageBox, QFrame, QStyle, QComboBox
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QSize
 from PyQt6.QtGui import QFont, QIcon, QPalette, QColor
@@ -146,6 +146,46 @@ def get_target_crf(original_bitrate_kbps: int) -> int:
 
 COMPATIBLE_CODECS = ['h264', 'avc', 'avc1']  # Codecs that work well with auto-editor
 
+# Speed presets for encoding
+SPEED_PRESETS = {
+    'Fastest': ('ultrafast', 'p1'),   # (libx264 preset, nvenc preset)
+    'Fast': ('veryfast', 'p2'),
+    'Balanced': ('fast', 'p4'),
+    'Quality': ('medium', 'p5'),
+    'Best Quality': ('slow', 'p7'),
+}
+
+
+def detect_hardware_encoders() -> dict:
+    """Detect available hardware encoders by querying FFmpeg."""
+    encoders = {'available': [], 'preferred': None}
+    
+    try:
+        result = subprocess.run(
+            ['ffmpeg', '-hide_banner', '-encoders'],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout + result.stderr
+        
+        # Check for various hardware encoders
+        if 'h264_nvenc' in output:
+            encoders['available'].append(('h264_nvenc', 'NVIDIA NVENC'))
+        if 'h264_vaapi' in output:
+            encoders['available'].append(('h264_vaapi', 'AMD/Intel VAAPI'))
+        if 'h264_qsv' in output:
+            encoders['available'].append(('h264_qsv', 'Intel QuickSync'))
+        if 'h264_amf' in output:
+            encoders['available'].append(('h264_amf', 'AMD AMF'))
+        if 'h264_videotoolbox' in output:
+            encoders['available'].append(('h264_videotoolbox', 'Apple VideoToolbox'))
+    except Exception as e:
+        print(f"Error detecting hardware encoders: {e}")
+    
+    if encoders['available']:
+        encoders['preferred'] = encoders['available'][0][0]
+    
+    return encoders
+
 
 class ProcessingThread(QThread):
     """Background thread for video processing."""
@@ -190,34 +230,86 @@ class ProcessingThread(QThread):
             temp_dir = tempfile.mkdtemp(prefix='vsc_')
             temp_file = os.path.join(temp_dir, 'preprocessed.mp4')
             
-            crf = get_target_crf(info.bitrate)
+            # Get encoding options
+            preserve_quality = self.options.get('preserve_quality', False)
+            speed_preset = self.options.get('speed_preset', 'Balanced')
+            use_hw_encoder = self.options.get('use_hw_encoder', False)
+            hw_encoder = self.options.get('hw_encoder', None)
             
-            # Full preprocessing command - ensures maximum compatibility with auto-editor
-            cmd = [
-                'ffmpeg', '-y', '-i', self.input_path,
-                '-c:v', 'libx264',
-                '-preset', 'fast',
-                '-crf', str(crf),
-                '-c:a', 'aac',
-                '-colorspace', 'bt709',
-                '-color_primaries', 'bt709',
-                '-color_trc', 'bt709',
-                '-map_metadata', '-1',
-                '-pix_fmt', 'yuv420p',
-                temp_file
-            ]
+            # Get preset names
+            libx264_preset, nvenc_preset = SPEED_PRESETS.get(speed_preset, ('fast', 'p4'))
             
-            process = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            _, stderr = process.communicate()
+            # Calculate target bitrate
+            if preserve_quality:
+                target_bitrate = int(info.bitrate * 1.1)  # 10% headroom
+            else:
+                target_bitrate = int(info.bitrate * 0.8)  # Reasonable compression
             
-            if process.returncode != 0:
-                self.finished.emit(False, f"Preprocessing failed: {stderr.decode()[:500]}")
-                return
+            def build_ffmpeg_cmd(use_hw: bool) -> list:
+                """Build FFmpeg command with either HW or SW encoder."""
+                cmd = ['ffmpeg', '-y', '-threads', '0', '-i', self.input_path]
+                
+                if use_hw and hw_encoder:
+                    # Hardware encoding
+                    cmd.extend(['-c:v', hw_encoder])
+                    if 'nvenc' in hw_encoder:
+                        cmd.extend(['-preset', nvenc_preset, '-b:v', f'{target_bitrate}k'])
+                    elif 'vaapi' in hw_encoder:
+                        cmd.extend(['-b:v', f'{target_bitrate}k'])
+                    elif 'qsv' in hw_encoder:
+                        cmd.extend(['-preset', 'medium', '-b:v', f'{target_bitrate}k'])
+                    else:
+                        cmd.extend(['-b:v', f'{target_bitrate}k'])
+                else:
+                    # Software encoding (libx264)
+                    cmd.extend(['-c:v', 'libx264', '-preset', libx264_preset, '-threads', '0'])
+                    if preserve_quality:
+                        cmd.extend(['-b:v', f'{target_bitrate}k'])
+                    else:
+                        crf = get_target_crf(info.bitrate)
+                        cmd.extend(['-crf', str(crf)])
+                
+                # Common settings
+                cmd.extend([
+                    '-c:a', 'aac',
+                    '-colorspace', 'bt709',
+                    '-color_primaries', 'bt709',
+                    '-color_trc', 'bt709',
+                    '-map_metadata', '-1',
+                    '-pix_fmt', 'yuv420p',
+                    temp_file
+                ])
+                return cmd
             
-            working_file = temp_file
-            self.progress.emit(30, "Preprocessing complete")
+            # Try hardware encoding first, fall back to software if it fails
+            tried_hw = False
+            if use_hw_encoder and hw_encoder:
+                tried_hw = True
+                self.progress.emit(12, f"Trying GPU encoding ({hw_encoder})...")
+                cmd = build_ffmpeg_cmd(use_hw=True)
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                _, stderr = process.communicate()
+                
+                if process.returncode == 0:
+                    working_file = temp_file
+                    self.progress.emit(30, "Preprocessing complete (GPU)")
+                else:
+                    # Hardware encoding failed, fall back to CPU
+                    self.progress.emit(15, "GPU encoding failed, using CPU...")
+                    tried_hw = False  # Mark to try software
+            
+            if not tried_hw or (tried_hw and not os.path.exists(temp_file)):
+                # Use software encoding
+                cmd = build_ffmpeg_cmd(use_hw=False)
+                process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                _, stderr = process.communicate()
+                
+                if process.returncode != 0:
+                    self.finished.emit(False, f"Preprocessing failed: {stderr.decode()[:500]}")
+                    return
+                
+                working_file = temp_file
+                self.progress.emit(30, "Preprocessing complete")
         
         if self._cancelled:
             self._cleanup(temp_file)
@@ -332,12 +424,14 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.processing_thread = None
+        # Detect available hardware encoders on startup
+        self.hw_encoders = detect_hardware_encoders()
         self.setup_ui()
         self.apply_style()
     
     def setup_ui(self):
         self.setWindowTitle("Video Silence Cutter")
-        self.setMinimumSize(600, 700)
+        self.setMinimumSize(650, 820)
         
         # Set window icon
         icon_path = Path(__file__).parent / "icon.png"
@@ -426,6 +520,40 @@ class MainWindow(QMainWindow):
         self.autofix_check.setChecked(True)
         self.autofix_check.setToolTip("Converts video to standard H.264 format before processing - fixes most compatibility issues")
         options_layout.addWidget(self.autofix_check)
+        
+        # Separator
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.Shape.HLine)
+        line2.setStyleSheet("background-color: #444;")
+        options_layout.addWidget(line2)
+        
+        # Speed preset dropdown
+        speed_layout = QHBoxLayout()
+        speed_layout.addWidget(QLabel("Encoding Speed:"))
+        self.speed_combo = QComboBox()
+        self.speed_combo.addItems(['Fastest', 'Fast', 'Balanced', 'Quality', 'Best Quality'])
+        self.speed_combo.setCurrentText('Balanced')
+        self.speed_combo.setToolTip("Faster encoding = larger file size, slower = smaller file with same quality")
+        speed_layout.addWidget(self.speed_combo)
+        speed_layout.addStretch()
+        options_layout.addLayout(speed_layout)
+        
+        # Hardware encoding checkbox
+        self.hw_check = QCheckBox("Use GPU hardware encoding")
+        if self.hw_encoders['available']:
+            hw_names = ', '.join([name for _, name in self.hw_encoders['available']])
+            self.hw_check.setToolTip(f"Available: {hw_names}")
+            self.hw_check.setChecked(True)  # Enable by default if available
+        else:
+            self.hw_check.setEnabled(False)
+            self.hw_check.setToolTip("No GPU encoders detected")
+        options_layout.addWidget(self.hw_check)
+        
+        # Preserve quality checkbox
+        self.quality_check = QCheckBox("Preserve source quality (larger output file)")
+        self.quality_check.setChecked(True)
+        self.quality_check.setToolTip("Match the original video bitrate instead of using compression")
+        options_layout.addWidget(self.quality_check)
         
         layout.addWidget(options_group)
         
@@ -637,7 +765,11 @@ class MainWindow(QMainWindow):
             'threshold': self.threshold_spin.value(),
             'margin': self.margin_spin.value(),
             'auto_fix': self.autofix_check.isChecked(),
-            'silent_speed': 99999  # Cut completely
+            'silent_speed': 99999,  # Cut completely
+            'speed_preset': self.speed_combo.currentText(),
+            'use_hw_encoder': self.hw_check.isChecked() and self.hw_check.isEnabled(),
+            'hw_encoder': self.hw_encoders.get('preferred'),
+            'preserve_quality': self.quality_check.isChecked(),
         }
         
         # Update UI
